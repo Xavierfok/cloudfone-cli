@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudfone-cli"
+dynamic = ["version"]
+description = "CLI and Python client for the cloudf.one API: real Android phones in Singapore on local mobile SIMs"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Xavier Fok"}]
+requires-python = ">=3.9"
+dependencies = ["requests>=2.25"]
+keywords = ["android", "cloud phone", "device farm", "stf", "adb", "singapore", "mobile testing"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Testing",
+    "Environment :: Console",
+]
+
+[project.urls]
+Homepage = "https://cloudf.one/?utm_source=pypi&utm_medium=package"
+Documentation = "https://cloudf.one/developers?utm_source=pypi&utm_medium=package"
+Source = "https://github.com/Xavierfok/cloudfone-cli"
+
+[project.scripts]
+cloudfone = "cloudfone.cli:main"
+
+[tool.setuptools]
+packages = ["cloudfone"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cloudfone.__version__"}
