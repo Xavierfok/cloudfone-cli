@@ -112,6 +112,13 @@ def cmd_adb_disconnect(c, a):
     print(f"closed adb on {a.serial}" + ("" if a.keep_lock else " and released the lock"))
 
 
+def cmd_install(c, a):
+    r = c.install(a.serial, a.file)
+    if a.json:
+        return _print_json(r)
+    print(f"installed {r.get('package')} on {r.get('serial') or a.serial}")
+
+
 def cmd_tokens(c, a):
     for t in c.tokens():
         print(t)
@@ -192,6 +199,11 @@ def build_parser():
     s.add_argument("serial")
     s.add_argument("--keep-lock", action="store_true")
     s.set_defaults(fn=cmd_adb_disconnect)
+
+    s = sub.add_parser("install", help="install an APK (or .apks/.xapk bundle) on one of your phones")
+    s.add_argument("serial")
+    s.add_argument("file", help="path to the .apk, .apks or .xapk (up to 512 MB)")
+    s.set_defaults(fn=cmd_install)
 
     sub.add_parser("tokens", help="list your access token titles").set_defaults(fn=cmd_tokens)
 
