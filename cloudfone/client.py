@@ -5,16 +5,22 @@ authenticates with an access token you mint yourself at cloudf.one/#!/settings.
 The partner endpoints (/stock, /orders) take a separate partner key.
 
 What the REST API cannot do, so this client does not pretend to: tap, swipe,
-type, screenshot or install an APK. Those run over STF's websocket protocol or
-over adb, and adb needs a WireGuard tunnel (see adb_connect below).
+type or screenshot. Those run over STF's websocket protocol or over adb, and adb
+needs a WireGuard tunnel (see adb_connect below). Installing an APK does not:
+install() uploads it over REST.
 """
+import os
 import time
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 import requests
 
 DEFAULT_BASE_URL = "https://cloudf.one/api/v1"
 DEFAULT_LOCK_TIMEOUT_MS = 15 * 60 * 1000
+MAX_INSTALL_BYTES = 512 * 1024 ** 2   # the server refuses bigger uploads with a 413
+INSTALL_TIMEOUT = 900                 # the server answers after Android finishes installing
+APK_CONTENT_TYPE = "application/vnd.android.package-archive"
 
 
 class CloudfoneError(Exception):
@@ -39,7 +45,7 @@ class CloudfoneClient:
 
     # ---- plumbing -------------------------------------------------------
 
-    def _request(self, method, path, *, key=None, **kwargs):
+    def _request(self, method, path, *, key=None, timeout=None, **kwargs):
         key = key if key is not None else self.token
         if not key:
             raise CloudfoneError("no credential: pass a token (CLOUDFONE_TOKEN) "
@@ -49,7 +55,7 @@ class CloudfoneClient:
         url = f"{self.base_url}{path}"
         try:
             resp = self.session.request(method, url, headers=headers,
-                                        timeout=self.timeout, **kwargs)
+                                        timeout=timeout or self.timeout, **kwargs)
         except requests.RequestException as exc:
             raise CloudfoneError(f"{method} {path}: {exc}") from exc
         try:
@@ -111,6 +117,25 @@ class CloudfoneClient:
     def tokens(self) -> list:
         """Titles of your access tokens (STF never returns the secrets)."""
         return self._request("GET", "/user/accessTokens").get("tokens", [])
+
+    def install(self, serial: str, path: Union[str, os.PathLike],
+                timeout: float = INSTALL_TIMEOUT) -> dict:
+        """Install an APK on one of your phones: POST /devices/{serial}/install.
+
+        Takes a .apk or a split bundle (.apks, .xapk, or a zip of apks). It always
+        installs over an existing copy, never downgrades, and does not pre-grant
+        permissions. The call returns once Android has installed it, with the
+        package name. The server allows one install per phone at a time (409),
+        30 an hour per account (429) and files up to 512 MB (413).
+        """
+        path = Path(path).expanduser()
+        if not path.is_file():
+            raise CloudfoneError(f"{path} not found")
+        if path.stat().st_size > MAX_INSTALL_BYTES:
+            raise CloudfoneError(f"{path} is over the server's 512 MB upload cap")
+        with open(path, "rb") as fh:
+            return self._request("POST", f"/devices/{serial}/install", timeout=timeout,
+                                 files={"file": (path.name, fh, APK_CONTENT_TYPE)})
 
     def add_adb_key(self, public_key: str, title: Optional[str] = None) -> dict:
         body = {"publickey": public_key.strip()}
@@ -186,5 +211,7 @@ def _describe(method, path, status, data):
     hint = {401: " (token missing, wrong or revoked)",
             403: " (not yours, already controlled, or an admin-only endpoint)",
             404: " (unknown device or endpoint)",
+            413: " (upload too large)",
+            429: " (rate limited; wait before retrying)",
             504: " (the phone's host did not answer in time; try again)"}.get(status, "")
     return f"{method} {path} -> HTTP {status}{hint}: {detail}".rstrip(": ")

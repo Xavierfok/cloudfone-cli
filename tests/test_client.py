@@ -251,3 +251,69 @@ def test_cli_adb_connect_detects_silent_adb_failure(fake, capsys, monkeypatch):
                         lambda cmd, **kw: _Proc("failed to connect to 10.77.0.1:7597"))
     assert cli.main(["--token", "t", "adb-connect", "R5CT1", "--no-lock", "--via",
                      "10.77.0.1", "--connect"]) == 1
+
+
+INSTALLED = {"success": True, "serial": "R5CT1", "package": "com.example.app", "kind": "apk", "files": 1}
+
+
+def test_install_uploads_the_file_as_multipart_field_file(tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"PK fake apk")
+    c = client({("POST", "/devices/R5CT1/install"): (200, INSTALLED)})
+    assert c.install("R5CT1", apk)["package"] == "com.example.app"
+    call = c.session.calls[0]
+    name, fh, ctype = call["files"]["file"]
+    assert name == "app.apk" and ctype == "application/vnd.android.package-archive"
+    assert call["headers"]["Authorization"] == "Bearer tok"
+
+
+def test_install_waits_longer_than_the_default_timeout(tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"x")
+    seen = {}
+
+    class S(FakeSession):
+        def request(self, method, url, headers=None, timeout=None, **kwargs):
+            seen["timeout"] = timeout
+            return FakeResponse(200, INSTALLED)
+
+    CloudfoneClient(token="tok", session=S({})).install("R5CT1", apk)
+    assert seen["timeout"] >= 600
+
+
+def test_install_missing_file_never_calls_the_api(tmp_path):
+    c = client({})
+    with pytest.raises(CloudfoneError, match="not found"):
+        c.install("R5CT1", tmp_path / "nope.apk")
+    assert c.session.calls == []
+
+
+def test_install_refuses_files_over_the_server_cap_before_uploading(tmp_path, monkeypatch):
+    from cloudfone import client as client_mod
+    apk = tmp_path / "big.apk"
+    apk.write_bytes(b"x" * 11)
+    monkeypatch.setattr(client_mod, "MAX_INSTALL_BYTES", 10)
+    c = client({})
+    with pytest.raises(CloudfoneError, match="512 MB"):
+        c.install("R5CT1", apk)
+    assert c.session.calls == []
+
+
+def test_install_busy_phone_surfaces_the_servers_reason(tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"x")
+    busy = {"success": False, "error": "install_in_progress",
+            "detail": "another install is running on this phone"}
+    c = client({("POST", "/devices/R5CT1/install"): (409, busy)})
+    with pytest.raises(CloudfoneError) as e:
+        c.install("R5CT1", apk)
+    assert e.value.status == 409
+    assert "another install is running" in str(e.value)
+
+
+def test_cli_install_prints_the_package(fake, capsys, tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"x")
+    fake[("POST", "/devices/R5CT1/install")] = (200, INSTALLED)
+    assert cli.main(["--token", "t", "install", "R5CT1", str(apk)]) == 0
+    assert "installed com.example.app on R5CT1" in capsys.readouterr().out

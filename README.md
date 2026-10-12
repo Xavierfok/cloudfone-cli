@@ -10,10 +10,10 @@ The phone panel runs on [DeviceFarmer STF](https://github.com/DeviceFarmer/stf) 
 ## Install
 
 ```bash
-pip install cloudfone-cli
-# or, before the PyPI release lands:
 pip install git+https://github.com/Xavierfok/cloudfone-cli
 ```
+
+It isn't on PyPI yet, so install it from GitHub. `pip install cloudfone-cli` will work once the first release is published.
 
 ## Get a token
 
@@ -32,6 +32,7 @@ cloudfone devices --json          # the raw STF device objects
 cloudfone wait --timeout 300      # block until a phone is present and ready, print its serial
 cloudfone lock R5CT1 --minutes 30 # take the control lock
 cloudfone unlock R5CT1
+cloudfone install R5CT1 app.apk   # upload and install an APK (or .apks/.xapk), prints the package
 ```
 
 ```text
@@ -51,12 +52,22 @@ print(phone["serial"], phone["operator"], phone["network"]["subtype"])
 
 The control lock is the same lock a browser tab takes when you open the phone, so holding it from a script and from a tab at the same time makes them fight.
 
+## Installing an app
+
+APK install goes over REST, no tunnel needed:
+
+```bash
+cloudfone install R5CT1 app.apk
+# installed com.example.app on R5CT1
+```
+
+It sends `POST /api/v1/devices/{serial}/install` with the file as multipart field `file` (`CloudfoneClient.install()` from Python). It takes a plain .apk or a split bundle (.apks, .xapk, or a zip of apks), installs over an existing copy, never downgrades, and doesn't pre-grant permissions. Limits: 512 MB per upload, one install per phone at a time (a second gets a 409), 30 installs an hour per account (429). On a failed install the error carries Android's own reason, such as `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+
 ## What the API does not do
 
 These limits come from the platform, not this package, and cloudf.one documents them on its [developers page](https://cloudf.one/developers?utm_source=github&utm_medium=repo):
 
 - **No tap, swipe, type or screenshot over REST.** STF runs those over its websocket protocol. Drive them from the browser, or over adb.
-- **No APK install over REST.** Use the web panel, or adb.
 - **adb is not open to the internet.** `remoteConnect` hands back `cloudf.one:PORT`, but that port only accepts traffic through a WireGuard tunnel. Right now the tunnel is set up by hand: email or message cloudf.one and it gets scoped to your own phone.
 
 Once you have the tunnel, `adb-connect` does the lock, opens the port, and swaps in the tunnel address:
